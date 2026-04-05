@@ -1647,11 +1647,11 @@ function renderLiveTradeHistory(list){
   start('SUIUSDT', { textId: 'textBoxSui', statusId: 'statusSui', lastId: 'lastUpdatedSui' });
 
   // ===== AI 交互模块逻辑 =====
-  const providerEl = document.getElementById('aiProvider');
-  if (providerEl) {
-    // 移除主题/语言事件绑定，直接应用中文文案
+  const apiKeyEl = document.getElementById('apiKey');
+  const customBaseUrlEl = document.getElementById('customBaseUrl');
+  const customModelIdEl = document.getElementById('customModelId');
+  if (apiKeyEl && customBaseUrlEl && customModelIdEl) {
     applyLang();
-    const apiKeyEl = document.getElementById('apiKey');
     const saveKeyBtn = document.getElementById('saveKeyBtn');
     const ruleEl = document.getElementById('ruleInput');
     const saveRuleBtn = document.getElementById('saveRuleBtn');
@@ -1666,13 +1666,11 @@ function renderLiveTradeHistory(list){
     const autoSendBtn = document.getElementById('autoSendBtn');
     const statusEl = document.getElementById('aiStatus');
     const outputEl = document.getElementById('aiOutput');
-    // 解析与执行控制（第二列）
     const parseOnceBtn = document.getElementById('parseOnceBtn');
     const autoExecBtn = document.getElementById('autoExecBtn');
     const aiOpsStatusEl = document.getElementById('aiOpsStatus');
     const aiOpsLogEl = document.getElementById('aiOpsLog');
     const aiCmdLogView = document.getElementById('aiCmdLog');
-    // 初始化AI命令执行记录视图（最近200条）
     if (aiCmdLogView){
       try {
     const arr = JSON.parse(localStorage.getItem(AI_CMD_LOG_KEY) || '[]');
@@ -1876,6 +1874,8 @@ function renderLiveTradeHistory(list){
     // 本地存储键名
     const KEY_STORAGE = 'ai_api_key';
     const RULES_STORAGE = 'ai_rules_history';
+    const CUSTOM_BASE_URL_STORAGE = 'ai_custom_base_url';
+    const CUSTOM_MODEL_ID_STORAGE = 'ai_custom_model_id';
 
     // 加载与显示历史规则
     function loadRuleHistory() {
@@ -1908,6 +1908,26 @@ function renderLiveTradeHistory(list){
       try { localStorage.setItem(KEY_STORAGE, apiKeyEl.value || ''); } catch {}
       statusEl.textContent = tr('status_saved_key');
       setTimeout(() => statusEl.textContent = tr('ai_status_waiting'), 1200);
+    }
+
+    // 自定义模型配置存取
+    function loadCustomConfig() {
+      try {
+        if (customBaseUrlEl) customBaseUrlEl.value = localStorage.getItem(CUSTOM_BASE_URL_STORAGE) || '';
+        if (customModelIdEl) customModelIdEl.value = localStorage.getItem(CUSTOM_MODEL_ID_STORAGE) || '';
+      } catch {}
+    }
+    function saveCustomConfig() {
+      try {
+        if (customBaseUrlEl) localStorage.setItem(CUSTOM_BASE_URL_STORAGE, customBaseUrlEl.value || '');
+        if (customModelIdEl) localStorage.setItem(CUSTOM_MODEL_ID_STORAGE, customModelIdEl.value || '');
+      } catch {}
+    }
+    function getCustomConfig() {
+      return {
+        baseUrl: (customBaseUrlEl?.value || '').trim(),
+        modelId: (customModelIdEl?.value || '').trim()
+      };
     }
 
     // 选择数据的交易对
@@ -2038,7 +2058,6 @@ function renderLiveTradeHistory(list){
     }
 
     async function optimizePromptOnce(){
-      const provider = providerEl.value;
       const apiKey = (apiKeyEl.value || '').trim();
       const ruleText = (ruleEl.value || '').trim();
       const syms = selectedSymbols();
@@ -2048,7 +2067,7 @@ function renderLiveTradeHistory(list){
       try {
         const prompt = buildOptimizePrompt(ruleText, syms);
         let out = '';
-        out = await openaiCompatChat(provider, apiKey, prompt);
+        out = await openaiCompatChat(apiKey, prompt);
         // 提取```prompt 块内容作为优化后的提示词
         let optimized = '';
         const m = out.match(/```prompt\s*([\s\S]*?)```/i) || out.match(/```\s*([\s\S]*?)```/);
@@ -2072,141 +2091,32 @@ function renderLiveTradeHistory(list){
 
     // 仅请求 JSON 指令的补充（用于首次回复未包含可解析JSON时）
 
-    async function deepseekChat(apiKey, prompt) {
-      // DeepSeek V3.1 API 使用 OpenAI 兼容格式
-      // https://platform.deepseek.com/api-docs/
-      const dsCfg = (window.AI_CONFIG && window.AI_CONFIG.providers && window.AI_CONFIG.providers.deepseek) || {};
-      const url = dsCfg.url || 'https://api.deepseek.com/v1/chat/completions';
-      const body = {
-        model: dsCfg.model || 'deepseek-reasoner',
-        messages: [
-          {
-            role: 'system',
-            content: '你是一个专业的加密货币交易分析师，擅长分析市场数据并提供交易建议。'
-          },
-          {
-            role: 'user',
-            content: prompt
-          }
-        ],
-        thinking: (dsCfg.thinking ?? { type: 'enabled' }),
-        temperature: (dsCfg.temperature ?? 0.7),
-        max_tokens: (dsCfg.max_tokens ?? 2048),
-        top_p: (dsCfg.top_p ?? 0.95),
-        stream: (dsCfg.stream ?? false)
-      };
-      
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify(body),
-      });
-      
-      if (!res.ok) {
-        // 提供更详细的错误提示，包括地区限制检测
-        let errorMessage = `${res.status} ${res.statusText}`;
-        
-        try {
-          const errorData = await res.json();
-          if (errorData.error?.code === 'unsupported_country_region_territory') {
-            errorMessage = '403：地区限制，当前服务器所在地区不被支持';
-          } else if (errorData.error?.message) {
-            errorMessage = `${res.status}：${errorData.error.message}`;
-          }
-        } catch (e) {
-          // 如果无法解析JSON错误信息，使用默认错误处理
-          if (res.status === 401 || res.status === 403) {
-            errorMessage = `${res.status}：API密钥无效或权限不足`;
-          } else if (res.status === 429) {
-            errorMessage = '429：请求频率过高，请稍后再试';
-          }
-        }
-        
-        throw new Error(errorMessage);
+    async function openaiCompatChat(apiKey, prompt){
+      const customCfg = getCustomConfig();
+      const url = customCfg.baseUrl;
+      const model = customCfg.modelId;
+      if (!url || !model) {
+        throw new Error('请填写 Base URL 和模型 ID');
       }
-      
-      const data = await res.json();
-      const text = data?.choices?.[0]?.message?.content || '';
-      return text.trim() || JSON.stringify(data, null, 2);
-    }
-
-    // DeepSeek：仅输出 JSON 指令（DeepSeek式硬要求）
-    async function callDeepseekOpsJson(apiKey, prompt){
-      const dsCfg = (window.AI_CONFIG && window.AI_CONFIG.providers && window.AI_CONFIG.providers.deepseek) || {};
-      const req = (window.AI_CONFIG && window.AI_CONFIG.requirements) || {};
-      const instruct = req.fallbackJsonInstruction || '请仅输出一个JSON对象，形如 {"ops":[...]} ，不要输出任何其他文本。';
-      const url = dsCfg.url || 'https://api.deepseek.com/v1/chat/completions';
-      const body = {
-        model: dsCfg.model || 'deepseek-reasoner',
-        messages: [
-          { role: 'system', content: instruct },
-          { role: 'user', content: prompt }
-        ],
-        thinking: (dsCfg.thinking ?? { type: 'enabled' }),
-        temperature: (dsCfg.fallbackJson?.temperature ?? 0.2),
-        max_tokens: (dsCfg.fallbackJson?.max_tokens ?? 1024),
-        top_p: (dsCfg.top_p ?? 0.95),
-        stream: false
-      };
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-        body: JSON.stringify(body)
-      });
-      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-      const data = await res.json();
-      const txt = data?.choices?.[0]?.message?.content || '';
-      return (txt || '').trim();
-    }
-
-    async function openaiCompatChat(provider, apiKey, prompt){
-      const cfg = (window.AI_CONFIG && window.AI_CONFIG.providers && window.AI_CONFIG.providers[provider]) || {};
-      const isGemini = provider === 'gemini_flash';
-      const isDeepseek = provider === 'deepseek';
-      const isQwen = provider === 'qwen';
-      let url = cfg.url;
-      if (!url){
-        if (isGemini) url = 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
-        else if (isDeepseek) url = 'https://api.deepseek.com/v1/chat/completions';
-        else if (isQwen) url = (cfg.region === 'cn' ? 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions' : 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions');
-      }
-      const model = cfg.model || (isGemini ? 'gemini-2.5-pro' : (isDeepseek ? 'deepseek-reasoner' : 'qwen-max'));
       const body = {
         model,
         messages: [
           { role: 'system', content: '你是一个专业的加密货币交易分析师，擅长分析市场数据并提供交易建议。' },
           { role: 'user', content: prompt }
         ],
-        temperature: (cfg.temperature ?? 0.7),
-        max_tokens: (cfg.max_tokens ?? (isGemini ? 4096 : 2048)),
-        top_p: (cfg.top_p ?? 0.95),
-        stream: (cfg.stream ?? false)
+        temperature: 0.7,
+        max_tokens: 4096,
+        top_p: 0.95,
+        stream: false
       };
-      if (isDeepseek) {
-        body.thinking = (cfg.thinking ?? { type: 'enabled' });
-      }
       const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` };
-      let res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
+      const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
       if (!res.ok) {
         let errorMessage = `${res.status} ${res.statusText}`;
         try {
           const errorData = await res.json();
           if (errorData.error?.message) errorMessage = `${res.status}：${errorData.error.message}`;
         } catch {}
-        if (isQwen && res.status === 401) {
-          const altUrl = url.includes('dashscope-intl.aliyuncs.com') ? url.replace('dashscope-intl.aliyuncs.com','dashscope.aliyuncs.com') : url.includes('dashscope.aliyuncs.com') ? url.replace('dashscope.aliyuncs.com','dashscope-intl.aliyuncs.com') : url;
-          if (altUrl !== url) {
-            const res2 = await fetch(altUrl, { method: 'POST', headers, body: JSON.stringify(body) });
-            if (res2.ok) {
-              const data2 = await res2.json();
-              const text2 = data2?.choices?.[0]?.message?.content || '';
-              return text2.trim() || JSON.stringify(data2, null, 2);
-            }
-          }
-        }
         throw new Error(errorMessage);
       }
       const data = await res.json();
@@ -2214,51 +2124,34 @@ function renderLiveTradeHistory(list){
       return text.trim() || JSON.stringify(data, null, 2);
     }
 
-    async function openaiCompatOpsJson(provider, apiKey, prompt){
-      const cfg = (window.AI_CONFIG && window.AI_CONFIG.providers && window.AI_CONFIG.providers[provider]) || {};
+    async function openaiCompatOpsJson(apiKey, prompt){
       const req = (window.AI_CONFIG && window.AI_CONFIG.requirements) || {};
       const instruct = req.fallbackJsonInstruction || '请仅输出一个JSON对象，形如 {"ops":[...]} ，不要输出任何其他文本。';
-      const isGemini = provider === 'gemini_flash';
-      const isDeepseek = provider === 'deepseek';
-      const isQwen = provider === 'qwen';
-      let url = cfg.url;
-      if (!url){
-        if (isGemini) url = 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
-        else if (isDeepseek) url = 'https://api.deepseek.com/v1/chat/completions';
-        else if (isQwen) url = (cfg.region === 'cn' ? 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions' : 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions');
+      const customCfg = getCustomConfig();
+      const url = customCfg.baseUrl;
+      const model = customCfg.modelId;
+      if (!url || !model) {
+        throw new Error('请填写 Base URL 和模型 ID');
       }
-      const model = cfg.model || (isGemini ? 'gemini-2.5-pro' : (isDeepseek ? 'deepseek-reasoner' : 'qwen-max'));
       const body = {
         model,
         messages: [
           { role: 'system', content: instruct },
           { role: 'user', content: prompt }
         ],
-        ...(isDeepseek ? { thinking: (cfg.thinking ?? { type: 'enabled' }) } : {}),
-        temperature: (cfg.fallbackJson?.temperature ?? 0.2),
-        max_tokens: (cfg.fallbackJson?.max_tokens ?? 1024),
-        top_p: (cfg.top_p ?? 0.95),
+        temperature: 0.2,
+        max_tokens: 1024,
+        top_p: 0.95,
         stream: false
       };
       const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` };
-      let res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
+      const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
       if (!res.ok) {
         let errorMessage = `${res.status} ${res.statusText}`;
         try {
           const errorData = await res.json();
           if (errorData.error?.message) errorMessage = `${res.status}：${errorData.error.message}`;
         } catch {}
-        if (isQwen && res.status === 401) {
-          const altUrl = url.includes('dashscope-intl.aliyuncs.com') ? url.replace('dashscope-intl.aliyuncs.com','dashscope.aliyuncs.com') : url.includes('dashscope.aliyuncs.com') ? url.replace('dashscope.aliyuncs.com','dashscope-intl.aliyuncs.com') : url;
-          if (altUrl !== url) {
-            const res2 = await fetch(altUrl, { method: 'POST', headers, body: JSON.stringify(body) });
-            if (res2.ok) {
-              const data2 = await res2.json();
-              const txt2 = data2?.choices?.[0]?.message?.content || '';
-              return (txt2 || '').trim() || JSON.stringify(data2, null, 2);
-            }
-          }
-        }
         throw new Error(errorMessage);
       }
       const data = await res.json();
@@ -2266,9 +2159,8 @@ function renderLiveTradeHistory(list){
       return (txt || '').trim() || JSON.stringify(data, null, 2);
     }
 
-    // 统一入口：按提供商请求“JSON-only”输出
-    async function callOpsJson(provider, apiKey, prompt){
-      return await openaiCompatOpsJson(provider, apiKey, prompt);
+    async function callOpsJson(apiKey, prompt){
+      return await openaiCompatOpsJson(apiKey, prompt);
     }
 
     // 自动发送间隔设置（默认3分钟）
@@ -2314,7 +2206,6 @@ function renderLiveTradeHistory(list){
     }
 
     async function sendOnce() {
-      const provider = providerEl.value;
       const apiKey = (apiKeyEl.value || '').trim();
       const ruleText = (ruleEl.value || '').trim();
       const syms = selectedSymbols();
@@ -2326,17 +2217,17 @@ function renderLiveTradeHistory(list){
         const forceJsonOnly = !!(window.AI_CONFIG?.requirements?.forceJsonOnly);
         let out = '';
         if (forceJsonOnly) {
-          out = await callOpsJson(provider, apiKey, prompt);
+          out = await callOpsJson(apiKey, prompt);
           outputEl.textContent = "```json\n" + out + "\n```";
         } else {
-          out = await openaiCompatChat(provider, apiKey, prompt);
+          out = await openaiCompatChat(apiKey, prompt);
           outputEl.textContent = out;
         }
         // 若未能解析出JSON代码块，尝试追加“JSON-only”补充
         let parsed = extractOpsFromText(outputEl.textContent);
         if (!forceJsonOnly && parsed.errors.length){
           try {
-            const jsonOnly = await openaiCompatOpsJson(provider, apiKey, prompt);
+            const jsonOnly = await openaiCompatOpsJson(apiKey, prompt);
             const combined = out + "\n\n```json\n" + jsonOnly + "\n```\n";
             outputEl.textContent = combined;
           } catch(_){ }
@@ -2379,8 +2270,18 @@ function renderLiveTradeHistory(list){
 
     // 绑定事件
     loadKey();
+    loadCustomConfig();
     loadRuleHistory();
-    saveKeyBtn.addEventListener('click', saveKey);
+    saveKeyBtn.addEventListener('click', () => {
+      saveKey();
+      saveCustomConfig();
+    });
+    if (customBaseUrlEl) {
+      customBaseUrlEl.addEventListener('change', saveCustomConfig);
+    }
+    if (customModelIdEl) {
+      customModelIdEl.addEventListener('change', saveCustomConfig);
+    }
     saveRuleBtn.addEventListener('click', saveRule);
     clearRuleBtn.addEventListener('click', () => { ruleEl.value = ''; });
     if (optPromptBtn) optPromptBtn.addEventListener('click', optimizePromptOnce);

@@ -161,13 +161,12 @@
         <div class="panel ai-panel">
           <div class="panel__title" data-i18n="ai_panel_title">AI 交互模块</div>
           <div class="ai-row">
-            <label for="aiProvider" data-i18n="label_choose_ai">选择AI</label>
-            <select id="aiProvider">
-              <option value="gemini_flash" selected data-i18n="provider_gemini">Gemini 2.5 Pro</option>
-              <option value="deepseek" data-i18n="provider_deepseek">DeepSeek V3.2</option>
-              <option value="qwen" data-i18n="provider_qwen">Qwen3 Max</option>
-              <option value="openai" disabled data-i18n="provider_openai">更多模型（待定）</option>
-            </select>
+            <label for="customBaseUrl">Base URL</label>
+            <input id="customBaseUrl" type="text" placeholder="如: https://api.openai.com/v1/chat/completions" />
+          </div>
+          <div class="ai-row">
+            <label for="customModelId">模型 ID</label>
+            <input id="customModelId" type="text" placeholder="如: gpt-4o, deepseek-reasoner, qwen-max" />
           </div>
           <div class="ai-row">
             <label for="apiKey">API Key</label>
